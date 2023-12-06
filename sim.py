@@ -154,6 +154,29 @@ def sim_short_rate(
         return sim_dothan(**kwargs)
     else:
         return NotImplementedError
+    
+def eval_quanto(r_d, sigma_s, dt=1/252):
+    # Extract short rate sample shape
+    num_samples, num_points = r_d.shape
+    T = (num_points-1) * dt
+
+    # Time points for the data series
+    time_points = np.linspace(0, T, num_points)
+
+    # Numerical integration of r_d(s) over [0, T]
+    integral_r_d = np.trapz(r_d, time_points)
+
+    # Second term, which simplifies to sigma_s^2 * T / 2
+    integral_sigma_s_squared = 0.5 * sigma_s**2 * T
+
+    # Third term, which is sigma_s * W_T
+    integral_sigma_s_W_T = sigma_s * np.random.randn(num_samples)
+
+    # Evaluate final value
+    quanto_ratio_sample = np.exp(
+        integral_r_d - integral_sigma_s_squared + integral_sigma_s_W_T
+    )
+    return quanto_ratio_sample
 
 if __name__ == "__main__":
     import time

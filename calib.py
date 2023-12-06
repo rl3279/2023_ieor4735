@@ -15,25 +15,41 @@ from scipy.stats import norm
 import statsmodels.api as sm
 from statsmodels.regression.rolling import RollingOLS
 
-def vasicek_regression(rates, changes):
-    b = rates.mean()
-    X = -1 * (rates[:-1] - b).values.reshape(-1, 1)
-    y = changes.values
+def read_sofr(ma=False, ma_w = 90):
+    print("Reading SOFR...")
+    sofr_data = pd.read_excel('SOFR.xlsx')
+    sofr_rates = sofr_data[['Rate (%)']]/100
+    sofr_rates.loc[:,"dr"] = sofr_rates.loc[:,'Rate (%)'].diff()
+    sofr_rates.rename(columns={'Rate (%)':"r"}, inplace=True)
+    if ma:
+        sofr_rates = sofr_rates.rolling(ma_w).mean().dropna()
+        sofr_rates.loc[:,"dr"] = sofr_rates.loc[:,"r"].diff()
+    return sofr_rates.dropna()
 
-    model = LinearRegression()
-    model.fit(X, y)
-    a = -model.coef_[0]
+def read_stock():
+    print("Downloading euro stock and exchange rate...")
+    stock_data = yf.download('^STOXX50E','2018-11-01','2023-11-01')
+    exchange_rate = yf.download('EURUSD=X','2018-11-01','2023-11-01')
+    return stock_data, exchange_rate
 
-    # Estimate sigma
-    residuals = y - model.predict(X)
-    sigma = np.std(residuals)
-        
-    return a, sigma, b
+def calibrate_quanto():
+    stock_data, exchange_rate = read_stock()
+    delta_f = stock_data["Close"].apply(np.log).diff().std() * np.sqrt(252)
+    delta_x = exchange_rate["Close"].apply(np.log).diff().std() * np.sqrt(252)
+    aligned_data = pd.merge(
+        stock_data['Close'], exchange_rate['Close'], 
+        how="inner", left_index=True, right_index=True)
+    logret = aligned_data.apply(np.log).diff()
+
+    rho_fx = logret.corr().values[0,1]
+    sigma_s = (delta_f**2 + delta_x**2 + 2 * delta_f * delta_x * rho_fx)**0.5
+    return sigma_s
 
 def vasicek_regression_rol(df, dt=1/252, W=100):
-    rate_colname = 'Rate (%)'
+    rate_colname = 'r'
+    change_colname = "dr"
     X = df.loc[:, [rate_colname]]
-    y = df.loc[:, "changes"]
+    y = df.loc[:, change_colname]
     X = sm.add_constant(X)
     rols = RollingOLS(y, X, window=W)
     rres = rols.fit()
@@ -43,20 +59,32 @@ def vasicek_regression_rol(df, dt=1/252, W=100):
     params.loc[:,"sigma"] = np.sqrt(rres.mse_resid / dt)
     return params.loc[:,["a","b","sigma"]].dropna()
 
-def read_sofr():
-    filename = 'SOFR.xlsx'
-    rate_colname = 'Rate (%)'
-    sofr_data = pd.read_excel(filename)
-    sofr_rates = sofr_data[[rate_colname]]/100
-    sofr_rates.loc[:,"changes"] = sofr_rates.loc[:,rate_colname].diff()
-    return sofr_rates.dropna()
+def cir_regression_rol(df, dt=1/252, W=100):
+    rate_colname = 'r'
+    change_colname = "dr"
+    b1 = "sqrt(r)"
+    b2 = "1/sqrt(r)"
+    X = df.copy()
+    X.loc[:,b1] = df.loc[:,rate_colname]**(1/2)
+    X.loc[:,b2] = 1 / X.loc[:,b1]
+    y = X.loc[:, change_colname] / X.loc[:,b2]
+    X = X.loc[:,[b1, b2]]
+    rols = RollingOLS(y, X, window=W)
+    rres = rols.fit()
+    params = rres.params.copy()
+    params.loc[:,"a"] = -params[b1] / dt
+    params.loc[:,"b"] = params[b2] /params.loc[:,"a"]/ dt
+    params.loc[:,"sigma"] = np.sqrt(rres.mse_resid / dt)
+    return params.loc[:,["a","b","sigma"]].dropna()
+
+def calibrate(df, dt=1/252, W=200, model="vasicek"):
+    if model == "vasicek":
+        return vasicek_regression_rol(df, dt, W)
+    elif model == "cir":
+        return cir_regression_rol(df, dt, W)
+    else:
+        raise NotImplementedError
 
 if __name__ == "__main__":
-    sofr = read_sofr()
-    filename = 'SOFR.xlsx'
-    rate_colname = 'Rate (%)'
-    sofr_ma = sofr.rolling(90).mean().dropna()
-    sofr_ma.changes = sofr_ma.loc[:,rate_colname].diff()
-    sofr_ma.dropna(inplace=True )
-    result = vasicek_regression_rol(sofr_ma, W=100)
-    print(result)
+    sigma_s = calibrate_quanto()
+    print(sigma_s)
