@@ -104,7 +104,7 @@ def sim_cir(
 ):
     """Simulate CIR short rate using Gaussian.
 
-    Model: dr = a(b-r)dt + sigma*\sqrt{r}dW
+    Model: dr = a(b-r)dt + sig ma*\sqrt{r}dW
     """ 
     m = int(T / dt)
     sqrt_dt = np.sqrt(dt)
@@ -141,6 +141,86 @@ def sim_dothan(
     r[:, 1:] = dr.cumsum(axis = 1) + r0
     return r
 
+def sim_holee_1(
+    k: float,
+    sigma:float,
+    n:int=1000,
+    T:int=1,
+    dt:float=1e-2,
+    r0:float=0.02,
+    **kwargs
+):
+    """Simulate Ho-Lee short rate using Gaussian.
+
+    Model: dr = -k*r*dt + sigma * dW
+    """
+    m = int(T / dt)
+    sqrt_dt = np.sqrt(dt)
+    dr = np.zeros((n, m))
+    r = np.zeros((n, m+1))
+    r[:,0] = r0
+    Z = np.random.randn(n, m)
+    for t in range(m):
+        inc = -k * r[:,t]
+        np.copyto(dr[:,t], dt * inc + sigma * Z[:,t] * sqrt_dt * np.sqrt(r[:,t]))
+        np.copyto(r[:,t+1], r[:,t] + dr[:,t])
+    return r
+
+def sim_holee_2(
+    k: float,
+    sigma:float,
+    W_ma:int=10,
+    n:int=1000,
+    T:int=1,
+    dt:float=1e-2,
+    r0:float=0.02,
+    **kwargs
+):
+    """Simulate Ho-Lee short rate using Gaussian.
+
+    Model: dr = -k*r*dt + sigma * dW
+    """
+    m = int(T / dt)
+    sqrt_dt = np.sqrt(dt)
+    dr = np.zeros((n, m))
+    r = np.zeros((n, m+1))
+    r[:,0] = r0
+    Z = np.random.randn(n, m)
+    for t in range(m):
+        inc = -k * r[:,t] if t < W_ma else -k * r[:,t-W_ma:t].mean(axis=1)
+        np.copyto(dr[:,t], dt * inc + sigma * Z[:,t] * sqrt_dt * np.sqrt(r[:,t]))
+        np.copyto(r[:,t+1], r[:,t] + dr[:,t])
+    return r
+
+def sim_hw_v_ma(
+    a:float,
+    sigma:float,
+    W_ma:int=30,
+    n:int=1000,
+    T:int=1,
+    dt:float=1e-2,
+    r0:float=0.02,
+    **kwargs
+):
+    """Simulate Vasicek short rate using Gaussian.
+    
+    Model: dr = (b-ar)dt + sigma*dW
+    """
+    m = int(T / dt)
+    sqrt_dt = np.sqrt(dt)
+    dr = np.zeros((n, m))
+    r = np.zeros((n, m+1))
+    r[:,0] = r0
+    Z = np.random.randn(n, m)
+    for t in range(m):
+        b = r[:, max(0,t-W_ma):t].mean(axis=1)
+        inc = b - a * r[:,t]
+        np.copyto(dr[:,t], dt * inc + sigma * Z[:,t] * sqrt_dt)
+        np.copyto(r[:,t+1], r[:,t] + dr[:,t])
+    return r
+
+
+
 
 def sim_short_rate(
     kind = "vasicek",
@@ -152,6 +232,12 @@ def sim_short_rate(
         return sim_cir(**kwargs)
     elif kind == "dothan":
         return sim_dothan(**kwargs)
+    elif kind == "holee1":
+        return sim_holee_1(**kwargs)
+    elif kind == "holee2":
+        return sim_holee_2(**kwargs)
+    elif kind == "hw_v_ma":
+        return sim_hw_v_ma(**kwargs)
     else:
         return NotImplementedError
     
